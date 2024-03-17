@@ -10,19 +10,47 @@ class GymOccupancyDataset(Dataset):
         self.sequence_length = sequence_length
         self.forecast_horizon = forecast_horizon
 
-        # Assuming 'timestamp' is not needed as a feature for model input
+        # Ensure 'timestamp' is a datetime type and sort by it
+        self.data_frame['timestamp'] = pd.to_datetime(self.data_frame['timestamp'])
+        self.data_frame.sort_values('timestamp', inplace=True)
+        
         self.features = self.data_frame.drop(['occupancy_percentage', 'timestamp'], axis=1)
         self.labels = self.data_frame['occupancy_percentage']
 
+        # Generate valid indices ensuring continuity
+        self.valid_indices = self._find_valid_sequence_indices()
+
+    def _find_valid_sequence_indices(self):
+        valid_indices = []
+        timestamps = self.data_frame['timestamp']
+        max_idx = len(self.data_frame) - self.sequence_length - self.forecast_horizon + 1
+
+        for idx in range(max_idx):
+            # Calculate the time difference between the first and the last timestamp in the sequence
+            time_diff = (timestamps.iloc[idx + self.sequence_length - 1] - timestamps.iloc[idx]).total_seconds() / 3600
+            
+            # Check if the time difference is exactly what we expect (24 hours for sequence_length of 96 with 15 min intervals)
+            if time_diff == (self.sequence_length - 1) * 15 / 60:
+                valid_indices.append(idx)
+            else:
+                print(f"Invalid sequence at index {idx}, time difference: {time_diff} hours")
+        
+        return valid_indices
+
     def __len__(self):
-        # Adjust length to account for the sequence_length and forecast_horizon
-        return len(self.data_frame) - self.sequence_length - self.forecast_horizon + 1
+        return len(self.valid_indices)
 
     def __getitem__(self, idx):
-        start = idx
-        end = idx + self.sequence_length
+        # Use valid index to ensure continuity
+        actual_idx = self.valid_indices[idx]
+
+        start = actual_idx
+        end = actual_idx + self.sequence_length
         features_sequence = self.features.iloc[start:end].values
         target_sequence = self.labels.iloc[end:end+self.forecast_horizon].values
+
+        # Convert boolean to integers and ensure all data is float32 for compatibility
+        features_sequence = features_sequence.astype(np.float32)
 
         # Convert to tensor
         features_sequence = torch.from_numpy(features_sequence).float()
