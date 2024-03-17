@@ -9,22 +9,24 @@ from datasets.gym_dataset import GymOccupancyDataset
 from model.time_series_transformer import TimeSeriesTransformer
 
 # Initialize a new W&B run
-wandb.init(project="gym_occupancy_prediction", entity="gujjar19")
+wandb.init(project="gym_occupancy_prediction", entity="gujjar19", config={
+    "learning_rate": 0.001,
+    "epochs": 50,
+    "batch_size": 32,
+    "sequence_length": 96,
+    "forecast_horizon": 8,
+    "d_model": 64,
+    "num_layers": 3,
+    "nhead": 4,
+    "dim_feedforward": 256,
+})
 
-# Define your configuration
 config = wandb.config
-config.learning_rate = 0.001
-config.epochs = 20
-config.batch_size = 32
-config.sequence_length = 96
-config.forecast_horizon = 8
-config.d_model = 64
-config.num_layers = 3
-config.nhead = 4
-config.dim_feedforward = 256
 
 # Load dataset
-dataset = GymOccupancyDataset(csv_file='path_to_your_processed_csv.csv', sequence_length=config.sequence_length, forecast_horizon=config.forecast_horizon)
+dataset = GymOccupancyDataset(csv_file='data/processed_gym_occupancy_data.csv',
+                              sequence_length=config.sequence_length,
+                              forecast_horizon=config.forecast_horizon)
 
 # Split dataset into training and validation sets
 train_size = int(0.8 * len(dataset))
@@ -35,9 +37,10 @@ train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
 
-# Define the model using config
+# Define the model using config dynamically
 num_features = dataset.features.shape[1]  # Adjust if necessary based on your dataset
-model = TimeSeriesTransformer(num_features=num_features, num_layers=config.num_layers, d_model=config.d_model, nhead=config.nhead, dim_feedforward=config.dim_feedforward)
+model = TimeSeriesTransformer(num_features=num_features, config=config)
+
 
 # Loss function and optimizer using config
 criterion = nn.MSELoss()
@@ -46,6 +49,8 @@ optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
 # Device configuration (GPU/CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model.to(device)
+
+global_step = 0  # For more granular logging within W&B
 
 # Training and validation loop with logging
 for epoch in range(config.epochs):
@@ -56,14 +61,15 @@ for epoch in range(config.epochs):
         
         optimizer.zero_grad()
         predictions = model(features)
-        loss = criterion(predictions, targets.unsqueeze(-1))
+        loss = criterion(predictions, targets)
         loss.backward()
         optimizer.step()
         
         running_loss += loss.item()
+        wandb.log({"batch_train_loss": loss.item()}, step=global_step)
+        global_step += 1
         
-    # Log training metrics
-    wandb.log({"train_loss": running_loss / len(train_loader)})
+    wandb.log({"epoch_train_loss": running_loss / len(train_loader), "epoch": epoch})
 
     # Validation
     model.eval()
@@ -72,11 +78,10 @@ for epoch in range(config.epochs):
         for features, targets in val_loader:
             features, targets = features.to(device), targets.to(device)
             predictions = model(features)
-            loss = criterion(predictions, targets.unsqueeze(-1))
+            loss = criterion(predictions, targets)
             val_loss += loss.item()
     
-    # Log validation metrics
-    wandb.log({"val_loss": val_loss / len(val_loader)})
+    wandb.log({"epoch_val_loss": val_loss / len(val_loader), "epoch": epoch})
 
 # Close the W&B run
 wandb.finish()
