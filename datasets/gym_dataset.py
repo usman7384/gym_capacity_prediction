@@ -1,29 +1,31 @@
-import torch
-from torch.utils.data import Dataset
-import pandas as pd
+import numpy as np
 
 class GymOccupancyDataset(Dataset):
-    def __init__(self, csv_file, transform=None):
-        """
-        Args:
-            csv_file (string): Path to the csv file with preprocessed data.
-            transform (callable, optional): Optional transform to be applied on a sample.
-        """
+    def __init__(self, csv_file, sequence_length=96, forecast_horizon=8, transform=None):
         self.data_frame = pd.read_csv(csv_file)
         self.transform = transform
+        self.sequence_length = sequence_length
+        self.forecast_horizon = forecast_horizon
 
-        # Features and labels are explicitly defined
-        self.features = self.data_frame.drop('occupancy_percentage', axis=1).values
+        # Assuming 'timestamp' is not needed as a feature for model input
+        self.features = self.data_frame.drop(['occupancy_percentage', 'timestamp'], axis=1).values
         self.labels = self.data_frame['occupancy_percentage'].values
 
     def __len__(self):
-        return len(self.data_frame)
+        # Adjust length to account for the sequence_length and forecast_horizon
+        return len(self.data_frame) - self.sequence_length - self.forecast_horizon + 1
 
     def __getitem__(self, idx):
-        features = torch.tensor(self.features[idx], dtype=torch.float)
-        label = torch.tensor(self.labels[idx], dtype=torch.float)
+        start = idx
+        end = idx + self.sequence_length
+        features_sequence = self.features[start:end]
+        target_sequence = self.labels[end:end+self.forecast_horizon]
+
+        # Convert to tensor
+        features_sequence = torch.tensor(features_sequence, dtype=torch.float)
+        target_sequence = torch.tensor(target_sequence, dtype=torch.float)
 
         if self.transform:
-            features = self.transform(features)
+            features_sequence = self.transform(features_sequence)
 
-        return features, label
+        return features_sequence, target_sequence
