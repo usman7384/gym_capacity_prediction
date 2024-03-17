@@ -1,3 +1,5 @@
 .vscode/launch.json
 # add data directory to git ignore
 data/
+wandb/
+*.pyc
